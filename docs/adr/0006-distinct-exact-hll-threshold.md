@@ -58,6 +58,17 @@ Rationale:
   native HLL implementation use its stock semantics without re-tuning. The 12 KiB sketch also sits far
   under DynamoDB's 400 KB item ceiling, so an HLL bucket always fits where an exact set might not.
 
+  **Interop caveat (v0.2 re-review):** equal precision `p` is *necessary but not sufficient* for two
+  HLL implementations to interoperate — Redis's native HLL and any JVM HLL library use different
+  register encodings and hash functions, so their serialized sketches neither merge nor deserialize
+  across implementations. This is harmless while a sketch never leaves the backend that produced it.
+  We therefore scope an HLL sketch as **opaque, same-implementation-only bytes**: a backend may use
+  its native/library HLL internally, but a serialized `hllSketch` (e.g. in a seed/export, ADR 0008)
+  is only meaningful to the same implementation that wrote it. **Cross-backend migration of HLL
+  sketches is explicitly not supported** in v1 (only exact members / counts migrate across backends);
+  a canonical wire HLL (pinned algorithm + hash + layout) can be added additively later if that need
+  arises.
+
 Both numbers are **defaults on `BackendCapabilities`**, not hardcoded in core (P18): a backend
 documents its own values at dev time (§8 note, OQ-A) and may raise/lower them, but the TCK
 (ADR 0004) verifies whatever it declares.

@@ -81,8 +81,9 @@ Dependency versions are centralized in `gradle/libs.versions.toml` (add new libs
   the header `// SPDX-License-Identifier: BSD-3-Clause` (spotless adds it via `spotlessApply`).
   Library modules compile with `-Xlint:all -Werror` + Error Prone, so warnings fail the build.
 - **Coverage gates** (`jacocoTestCoverageVerification`, part of `check`): library modules floor at
-  LINE ≥70% / BRANCH ≥55%; `velocity-core` raises LINE to ≥80%. Raise floors as coverage improves; a
-  module only restates limits it *raises*.
+  **LINE ≥80% / BRANCH ≥70%**; a module may restate a *higher* limit but never lower. Trivial/generated
+  code (records/DTOs, `**/dto/**`, `**/model/**`, generated DI) is excluded from the denominator, so
+  the floor applies to logic. See the working model below and `CONTRIBUTING.md` → Definition of Done.
 - **Spotless must run fresh** — it is marked incompatible with the configuration cache (a
   google-java-format/Guava class-loading bug). Seeing "Configuration cache entry discarded … spotless…"
   is expected, not an error. The build cache is also disabled globally in `gradle.properties` for the
@@ -94,12 +95,39 @@ Dependency versions are centralized in `gradle/libs.versions.toml` (add new libs
   for stub modules; `isFailOnError = false` in `velocity.java-conventions` keeps the build green. This
   self-resolves once a module gains public types — do not "fix" it by weakening anything else.
 
+## Working model — how to write code here (required)
+
+`CONTRIBUTING.md` → **Definition of Done** is binding for every code change. In short: tests ship
+with the code; **≥80% line / ≥70% branch** on the affected module (a hard build gate); **no tests for
+trivial code** (records/DTOs/getters and generated code are excluded from coverage — do not pad, and
+do not hide real logic in an excluded package); and **a feature is not done until it has an
+end-to-end/integration test** (a backend → the `velocity-testkit` conformance TCK; the service → an
+HTTP/OpenAPI integration test).
+
+For any **non-trivial** change, follow this loop before reporting the work complete:
+
+1. Write the implementation **and** its tests together (unit tests for logic; the e2e/TCK test for a
+   feature).
+2. Run `./gradlew clean build test` (or the affected module's `build`) and confirm it is green,
+   including `jacocoTestCoverageVerification`. **Never report a change done on a red or skipped gate.**
+3. **Invoke the `change-validator` sub-agent** (`.claude/agents/change-validator.md`) via the Agent
+   tool, telling it what the change is and which requirement/ADR (`FR-*`/`NFR-*`/ADR-N/§11 item) it
+   implements. It independently checks that the tests are *meaningful* (would fail if the code were
+   broken) and that the code actually satisfies that requirement and the frozen `velocity-spi`
+   contract (NFR-17, additive-only).
+4. If it returns `CHANGES REQUESTED`, address the findings and re-validate. Only call the change done
+   after it returns `APPROVE` (or you have explicitly resolved each finding with the user).
+
+Trivial, no-runtime-surface changes (docs, comments, a pure DTO/record addition, build-comment tweaks)
+do not require the sub-agent — but a DTO addition still goes through the build. When in doubt, validate.
+
 ## CI / automation (`.github/`)
 
 `ci.yml`'s **`build` job** (`./gradlew clean build test` on JDK 21) is the required status check.
 Dependabot (`dependabot.yml`) runs **weekly on Tuesday** for the `gradle` and `github-actions`
-ecosystems, grouped into one PR each. `auto-dependabot.yml` **auto-approves and auto-merges every
-Dependabot PR** (all update types, both ecosystems) once CI is green — so CI is the *only* gate
-protecting `main`; keep it meaningful. Auto-merge also needs three repo settings enabled (allow
-auto-merge, allow Actions to approve PRs, and branch protection requiring the `build` check) — see the
-header comment in `auto-dependabot.yml`.
+ecosystems, grouped into one PR each. `auto-dependabot.yml` auto-approves and auto-merges only
+**patch/minor** Dependabot PRs once CI is green; **major bumps and all github-actions updates are
+held for human review** (a green build runs a dependency's build-time code but doesn't prove a new
+release is trustworthy). Auto-merge also needs three repo settings enabled (allow auto-merge, allow
+Actions to approve PRs, and branch protection requiring the `build` check) — see the header comment
+in `auto-dependabot.yml`.

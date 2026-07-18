@@ -31,22 +31,30 @@ jobs:
         with:
           github-token: "${{ secrets.GITHUB_TOKEN }}"
 
-      # Auto-merge EVERY Dependabot update unconditionally — patch, minor, and major bumps, across
-      # both the gradle and github-actions ecosystems. The job-level `if:` above already restricts
-      # this workflow to Dependabot's own PRs; `--auto` still waits for the required CI checks, so a
-      # PR only lands once the build is green and branch protection is satisfied. The `metadata` step
-      # is retained for its logging/annotations even though no step gates on its output.
+      # Auto-merge only low-risk bumps: patch and minor version updates. Major version bumps — and
+      # ANY github-actions update (a privileged, secret-adjacent supply-chain surface; these actions
+      # run with `contents: write` and would sit next to publish/signing creds once a release
+      # workflow lands) — require a human, because a green CI run executes the dependency's build-time
+      # code but does not establish that a newly published release is trustworthy. For a grouped PR,
+      # `update-type` reflects the highest bump in the group, so a group containing a major is held.
       #
-      # NOTE: this merges major version bumps and GitHub Actions updates (a privileged supply-chain
-      # surface) on a green CI alone, without human review — an explicit, deliberate choice for this
-      # repo. Your required status checks (CI) are the only gate.
+      # `--auto` still waits for the required CI checks, so an eligible PR lands only once the build
+      # is green and branch protection is satisfied.
       - name: Enable auto-merge
+        if: |
+          (steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
+           steps.metadata.outputs.update-type == 'version-update:semver-minor') &&
+          steps.metadata.outputs.package-ecosystem != 'github-actions'
         run: gh pr merge --auto --squash --delete-branch "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Approve PR
+        if: |
+          (steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
+           steps.metadata.outputs.update-type == 'version-update:semver-minor') &&
+          steps.metadata.outputs.package-ecosystem != 'github-actions'
         run: gh pr review --approve "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
