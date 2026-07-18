@@ -1,0 +1,37 @@
+# Dependabot configuration for velocity-engine.
+# https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+#
+# A single root `gradle` entry covers the whole multi-project build — build-logic and every
+# velocity-* module resolve from the shared version catalog (gradle/libs.versions.toml), so one
+# ecosystem entry at "/" sees them all. The `github-actions` entry keeps the pinned action SHAs in
+# the CI and auto-merge workflows current (a stale pinned action is a security liability, not just a
+# staleness one).
+#
+# Updates are grouped so a week's bumps arrive as a single PR per ecosystem, which pairs with the
+# auto-merge workflow (.github/workflows/auto-dependabot.yml): fewer PRs, one CI run, one merge.
+
+version: 2
+updates:
+  - package-ecosystem: "gradle"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+    open-pull-requests-limit: 10
+    groups:
+      gradle-dependencies:
+        applies-to: version-updates
+        patterns:
+          - "*"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+    open-pull-requests-limit: 10
+    groups:
+      gh-actions:
+        applies-to: version-updates
+        patterns:
+          - "*"

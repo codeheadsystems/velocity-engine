@@ -1,0 +1,53 @@
+name: Auto-approve and merge Dependabot PRs
+
+# When Dependabot opens a PR, fetch its metadata, approve it, and enable auto-merge so it lands as
+# soon as CI (.github/workflows/ci.yml) is green and branch protection is satisfied. `--auto` does
+# not merge immediately: GitHub waits for the required status checks, so "auto-merge on success"
+# means "merge once the CI gate passes."
+#
+# Requires two repository settings to be enabled (they cannot be set from a workflow):
+#   1. Settings → General → Pull Requests → "Allow auto-merge"
+#   2. Settings → Actions → General → Workflow permissions →
+#        "Allow GitHub Actions to create and approve pull requests"
+# And, to give `--auto` something to wait on:
+#   3. Settings → Branches → protect `main` with this repo's `build` job as a required status check.
+# Without (1)/(2) the approve/auto-merge calls fail; without (3) a green PR merges as soon as it is
+# approved rather than waiting for CI.
+
+on: pull_request
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  dependabot:
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    steps:
+      - name: Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3
+        with:
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
+
+      # Auto-merge EVERY Dependabot update unconditionally — patch, minor, and major bumps, across
+      # both the gradle and github-actions ecosystems. The job-level `if:` above already restricts
+      # this workflow to Dependabot's own PRs; `--auto` still waits for the required CI checks, so a
+      # PR only lands once the build is green and branch protection is satisfied. The `metadata` step
+      # is retained for its logging/annotations even though no step gates on its output.
+      #
+      # NOTE: this merges major version bumps and GitHub Actions updates (a privileged supply-chain
+      # surface) on a green CI alone, without human review — an explicit, deliberate choice for this
+      # repo. Your required status checks (CI) are the only gate.
+      - name: Enable auto-merge
+        run: gh pr merge --auto --squash --delete-branch "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Approve PR
+        run: gh pr review --approve "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
