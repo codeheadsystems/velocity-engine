@@ -48,7 +48,7 @@ FeatureResult = Success { FeatureValue }
               | Failure { FailureCode code, String detail }
 
 FeatureValue  = { FeatureRef        feature,
-                  Number            value,            // BigDecimal cents for SUM (P3); long for COUNT/DISTINCT
+                  BigDecimal        value,            // uniform: integer-valued for COUNT/DISTINCT, cents for SUM (P3)
                   Exactness         exactness,        // EXACT | APPROXIMATE          (FR-7)
                   ReadYourWriteLevel readYourWriteLevel, // ATOMIC | SNAPSHOT | BESTEFFORT (ADR 0007)
                   String            definitionVersionHash, // FR-40; nullable until R12 lands
