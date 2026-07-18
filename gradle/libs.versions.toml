@@ -43,7 +43,7 @@ hikaricp = "7.1.0"
 
 # Persistence — Redis backend (phase 2, sliding/hot-path reference). Lettuce is the async Redis
 # client; velocity-only, so it tracks the current latest 6.x.
-lettuce = "6.5.5.RELEASE"
+lettuce = "7.6.0.RELEASE"
 
 # Testing — Testcontainers for the backend integration tests (Postgres now; Redis/LocalStack later).
 testcontainers = "1.21.4"
