@@ -1,6 +1,6 @@
 # Velocity Engine — Requirements
 
-> Status: **Draft v0.2** · Date: 2026-07-18 · Owner: Ned Wolpert
+> Status: **Draft v0.3** · Date: 2026-07-18 · Owner: Ned Wolpert
 > License: **BSD-3-Clause** · Group: `com.codeheadsystems` · Root package: `com.codeheadsystems.velocity`
 
 This document captures the functional and non-functional requirements for the Velocity Engine,
@@ -17,6 +17,15 @@ Anything not yet decided lives in [§13 Open Questions](#13-open-questions).
 > contradictions they found (universal read-your-write, HLL-on-sliding, single storage-key schema,
 > tumbling-only v1) are also corrected inline below. Where §15 amends an earlier clause, the earlier
 > clause carries a "→ see §15" pointer.
+
+> **v0.3 changelog.** After a second pass by the same four reviewers (evaluating readiness to start
+> building), the following were folded in: the hot-path result DTO is **frozen complete in phase 1**
+> as a value-or-failure sum type (**[ADR 0009](adr/0009-hot-path-result-dto.md)**, completing ADR 0007);
+> `velocity-spi` is **serialization-neutral** (Jackson moves to `velocity-core`); HLL sketches are
+> **same-implementation-only** (cross-backend HLL migration dropped from v1); Postgres **and** Redis
+> are both committed **production-grade** v1 backends; and new acceptance gates were added
+> (idempotency-exactness #15, seed-implemented #16) along with KMS key-custody for R11 and
+> `deadline-exceeded`/`overloaded` problem types in AR-5.
 
 ---
 
@@ -151,9 +160,12 @@ record(
   key**; cross-key/cross-backend fan-out atomicity is a declared capability, and `record()` reports
   per-feature apply status. → see [§15 R3](#15-review-driven-revisions-v02).
 - **FR-2** `record()` SHALL, in the same call, return the post-increment velocities for the affected
-  `(subject, aggregation, window)` tuples. A caller MAY request a subset of windows/aggregations to
-  return to bound payload size. The *strength* of "post-increment" (read-your-write) is per D4's
-  declared capability, not universal. → see [§15 R2](#15-review-driven-revisions-v02).
+  `(subject, aggregation, window)` tuples, as the frozen **`FeatureResult` value-or-failure** type
+  ([ADR 0009](adr/0009-hot-path-result-dto.md)): per feature, a value (with read-your-write level,
+  `exact|approximate`, definition-version hash) or a distinguishable failure, plus an apply status.
+  A caller MAY request a subset of windows/aggregations to bound payload size. The *strength* of
+  "post-increment" (read-your-write) is per D4's declared capability, not universal.
+  → see [§15 R2](#15-review-driven-revisions-v02).
 - **FR-3** Event time SHALL be the server's ingest clock (D7); for sliding windows the **backend
   clock is authoritative** (not the pod clock). Any client-supplied timestamp is ignored in v1 (MAY
   be captured for audit but MUST NOT affect bucketing). → see [§15 R9](#15-review-driven-revisions-v02).
@@ -343,8 +355,8 @@ existing event data *in*. This is a first-class concern, distinct from the hot `
                                      │ depends on
                  ┌───────────────────▼─────────────────────────┐
                  │   velocity-spi  (the contract module)       │
-                 │   • VelocityStore  • BackendCapabilities    │
-                 │   • shared SPI DTOs (updates, feature value)│
+                 │   • capability mix-ins • BackendCapabilities│
+                 │   • intents • FeatureResult (value|failure) │
                  └───────────────────┬─────────────────────────┘
                                      │ implemented by
         ┌──────────────┬─────────────┼───────────────┬──────────────┐
@@ -369,9 +381,15 @@ owns bucket keying, sliding/tumbling semantics, eviction, and its own key schema
 1. **Data-plane mix-ins** — a backend implements only the ones it declares:
    `CountStore`, `SumStore`, `DistinctStore`, `SlidingSupport`, `TumblingSupport`, `SeedSupport`
    (onboarding `seed(...)`, FR-32 — its schema resolved before freeze per
-   [§15 R3b](#15-review-driven-revisions-v02)). Common ops: `apply(intents) -> featureValues`,
-   `query(tuples) -> featureValues`, `purge(...)`. `apply`/`query` honor a **caller deadline** and
-   return a **read-your-write level** per result ([§15 R2](#15-review-driven-revisions-v02)).
+   [§15 R3b](#15-review-driven-revisions-v02)). Common ops: `apply(intents) -> ApplyResult`,
+   `query(tuples) -> FeatureResult[]`, `purge(...)`. `apply`/`query` honor a **caller deadline**, and
+   the result is a **frozen value-or-failure sum type** — `FeatureResult = Success{FeatureValue} |
+   Failure{FailureCode}` — carrying, per feature, the read-your-write level, `exact|approximate`,
+   the definition-version hash, and (for `apply`) the per-feature apply status. This full shape is
+   frozen in phase 1 (**[ADR 0009](adr/0009-hot-path-result-dto.md)**), so a stalled backend returns a
+   distinguishable `UNAVAILABLE`/`DEADLINE_EXCEEDED`, never a silent `0`. The SPI DTOs are
+   **serialization-neutral** (plain records, no Jackson; JSON lives in `velocity-core`/the wire layer —
+   [ADR 0002](adr/0002-velocity-spi-standalone-module.md), [§15 R2b](#15-review-driven-revisions-v02)).
 2. **`BackendCapabilities`** — the descriptor: supported windows (duration/type/exactness), supported
    aggregations, `distinctHllSliding`, distinct exact-cardinality clamp & default threshold,
    **`maxRetention`** (FR-22a), read-your-write level (`atomic|snapshot|besteffort`), idempotency
@@ -385,7 +403,7 @@ including negative tests ([§15 R7](#15-review-driven-revisions-v02)).
 
 | Module | Purpose | Build phase | Publishes |
 |--------|---------|-------------|-----------|
-| `velocity-spi` | **The contract module**: `VelocityStore`, `BackendCapabilities`, shared SPI DTOs | 1 | ✅ |
+| `velocity-spi` | **The contract module**: capability mix-ins, `BackendCapabilities`, serialization-neutral SPI DTOs (`FeatureResult`) | 1 | ✅ |
 | `velocity-core` | Engine, feature/fan-out resolver, window/aggregation model, YAML I/O (depends on `velocity-spi`) | 1 | ✅ |
 | `velocity-api` | OpenAPI 3.1 document + shared API DTOs (source of truth) | 1 | ✅ (spec artifact) |
 | `velocity-testkit` | In-memory `velocity-spi` impl, fixtures, Testcontainers helpers | 1 | ✅ |
@@ -422,7 +440,10 @@ including negative tests ([§15 R7](#15-review-driven-revisions-v02)).
   on the shared API DTOs + a standard HTTP client.
 - **AR-5** Errors SHALL use a consistent problem model (RFC 9457 `application/problem+json`
   recommended) distinguishing: unknown namespace, unsupported window, validation error, backend
-  unavailable, rate-limited.
+  **unavailable**, **`deadline-exceeded`** (distinct from unavailable — a caller's fail-open/closed
+  policy may differ; NFR-19), **`overloaded`** (load-shed, NFR-22), and rate-limited. These mirror the
+  SPI `FailureCode`s ([ADR 0009](adr/0009-hot-path-result-dto.md)) so a wire caller can branch the same
+  way an embedded caller does.
 
 ---
 
@@ -494,8 +515,10 @@ FR-12, FR-22a) rather than papering over differences.
    (proven by Testcontainers-backed test).
 2. **`velocity-backend-redis` (sliding, hot-path) is in v1** and implements true-sliding COUNT/SUM
    and exact sliding DISTINCT (ZSET-bounded), proven exact + read-your-write (`atomic`) under
-   concurrent load. *(Two backends in v1 → the SPI's sliding/tumbling capability split is exercised
-   before freeze.)*
+   concurrent load. *(Both Postgres and Redis are committed v1 **production-grade** backends — both
+   are load-tested with published SLOs and DR behavior per [GR-8](#16-governance--enterprise-readiness),
+   not just TCK-passing — and the two window shapes exercise the SPI's sliding/tumbling split before
+   freeze.)*
 3. **SPI conformance TCK** ([§15 R7](#15-review-driven-revisions-v02)): both v1 backends pass the
    shared `*Scenarios` suite in `velocity-testkit`, including negative tests (HLL-on-sliding rejected;
    read-your-write on a `besteffort` backend flagged, not silently wrong).
@@ -522,6 +545,13 @@ FR-12, FR-22a) rather than papering over differences.
 13. All modules build on Java 21 with Gradle, pass coverage gates, and produce Central-publishable
     signed artifacts (dry-run).
 14. Admin **audit log** records purge/seed/config-change actions ([§16](#16-governance--enterprise-readiness)).
+15. **Idempotency-exactness** ([§15 R15](#15-review-driven-revisions-v02)): JDBI and Redis declare
+    idempotency support, and a **retry-storm test** proves COUNT stays exact under duplicate
+    idempotency-key `record()`s (no double-count → no false fraud hit / false rate-limit trip).
+16. **Seed actually implemented** ([§15 R3b](#15-review-driven-revisions-v02), ADR 0008): ≥1 v1 backend
+    implements `SeedSupport`, and a `SeedSupportScenarios` test proves a **seeded** bucket and a
+    **recorded** bucket merge identically through the same windowed read (so the seed contract is real
+    in v1, not shelfware).
 
 ---
 
@@ -624,13 +654,24 @@ re-cut of a published SPI at phase 3.
   block unbounded. New NFR-19. Also: **read-your-write is a declared capability**
   (`atomic|snapshot|besteffort`), SHALL for exact backends, best-effort + `approximate`-flagged
   otherwise; reconciles D4, FR-2, NFR-7 (which previously overclaimed a universal guarantee).
+  **v0.2 re-review update:** the *shape* of the result (the `Failure{UNAVAILABLE|DEADLINE_EXCEEDED|…}`
+  variant) is **frozen in phase 1** via **[ADR 0009](adr/0009-hot-path-result-dto.md)** — only the
+  deadline/bounded-failure *enforcement* stays Tier-2. Freezing the shape late would re-cut a
+  published DTO.
+- **R2b — `velocity-spi` is serialization-neutral.** *(Architect re-review, user decision.)* SPI DTOs
+  are plain records with **no Jackson binding**; Jackson 3 is required in `velocity-core`/the wire
+  layer, which owns JSON. Keeps the engine's serialization stack off a third-party backend author's
+  classpath and out of the frozen surface (NFR-17). Amends ADR 0002; the skeleton's `jackson` on the
+  `velocity-spi` `api` surface was removed.
 - **R3 — Per-feature apply status + single-backend decision domain.** *(Rules A, Architect B6.)* Since
   one `record()` can fan out across features on *different* backends (FR-16 binds a feature to one
   backend), `record()` MUST return a **per-feature apply status** (`applied|failed|skipped`) and the
   engine MUST document whether fan-out is all-or-nothing or partial (and identify every feature that
   did not apply). A caller MUST be able to **constrain all features a single decision reads to one
   backend**, so they share one consistency + latency domain. New FR-34, FR-37, NFR-20. Note DynamoDB
-  `TransactWriteItems` caps atomic fan-out at 100 items — declare `maxAtomicFanOut`.
+  `TransactWriteItems` caps atomic fan-out at 100 items — declare `maxAtomicFanOut`. **v0.2 re-review
+  update:** the per-feature apply-status *field* is **frozen in phase 1** on the result DTO
+  ([ADR 0009](adr/0009-hot-path-result-dto.md)); gated in acceptance #4.
 - **R4 — Namespace-scoped authorization (not just authentication).** *(Security d.)* Each API key MUST
   be **bound to an explicit allowed-namespace set**; a request whose path namespace is outside the
   key's scope MUST be **denied by default**. Authz is in scope for v1 (today any caller can pass any
@@ -639,7 +680,10 @@ re-cut of a published SPI at phase 3.
   4, Rules, Architect B4.)* Exact distinct persists raw dimension values (IPs, tokens, device IDs).
   For DISTINCT dimensions the engine MUST support **keyed hashing/tokenization at rest** (per-namespace
   salt), so exact-distinct sets never store raw PII; HLL of hashed values is unaffected. New FR-38;
-  amends NFR-12 (which only covered logging).
+  amends NFR-12 (which only covered logging). **v0.2 re-review update (key custody):** the salt/key
+  MUST live in a **separate trust domain (KMS/secret store), not co-resident** with the distinct sets —
+  otherwise a low-entropy value like an IPv4 (2³² space) is brute-forceable offline after a single DB
+  dump, defeating the "no raw PII" guarantee. High-entropy dimensions (tokens) are fine either way.
 - **R15 — Idempotency as the inline default.** *(Security, Rules, Architect B6.)* At-least-once
   (NFR-8) makes COUNT provably inexact under retries. v1 reference backends (JDBI, Redis) MUST declare
   idempotency support; an idempotency key is the recommended inline posture; §8 "Exact" means "exact
@@ -670,6 +714,9 @@ re-cut of a published SPI at phase 3.
 - **R12 — Feature values carry their definition version/hash.** *(Rules D.)* Hot-reload (P6) can change
   a feature's window/threshold under a running rule; every feature value MUST carry the
   **definition-version/hash** it was computed under, so a caller can detect drift. New FR-40.
+  **v0.2 re-review update:** the `definitionVersionHash` *field* is **frozen in phase 1** on the result
+  DTO ([ADR 0009](adr/0009-hot-path-result-dto.md)), nullable until the hot-reload versioning behavior
+  lands; gated in acceptance #9.
 - **R13 — Feature-discovery read API.** *(Rules D.)* Add `GET /v1/{namespace}/features` (list + by
   version) so a rules layer can discover, pin, and diff feature definitions (today only `/capabilities`
   exists). New FR-41; amends AR-2.
@@ -692,6 +739,13 @@ re-cut of a published SPI at phase 3.
 `FR-45` effective-fan-out cap · `NFR-18` conformance TCK · `NFR-19` hot-path deadline & bounded
 failure · `NFR-20` single-backend decision domain · `NFR-21` namespace-scoped authz ·
 `NFR-22` self-protection & per-namespace fairness.
+
+**Frozen in phase 1 by [ADR 0009](adr/0009-hot-path-result-dto.md)** (v0.2 re-review): the hot-path
+result is a value-or-failure sum type carrying — per feature — the read-your-write level, `exact|
+approximate`, the `definitionVersionHash` (FR-40), an apply status (FR-34), and a distinguishable
+`FailureCode` (NFR-19). The *shape* is frozen now (only the enforcement behavior of R2/R10/R18 stays
+Tier-2/3), because this DTO rides on every `apply()`/`query()` call and could not gain those fields
+additively without re-cutting a published contract.
 
 ---
 
@@ -718,9 +772,13 @@ are project/operational commitments to document.
 - **GR-6 Data export / migration & exit story.** Feature definitions are portable YAML (low config
   lock-in, good), but counter **data** lock-in lives at the storage layer. Provide a documented path to
   **export counter data and migrate between backends**, and treat each backend's key schema as a
-  versioned surface (NFR-17).
+  versioned surface (NFR-17). Migration covers COUNT, SUM, and **exact** DISTINCT; **HLL-sketch
+  distinct does not migrate across backends** (opaque, same-implementation-only — ADR 0006/0008),
+  a v1 scope limit.
 - **GR-7 Capacity & cost model.** Publish **cost-per-million-events** guidance per backend so TCO is
-  quantifiable; recommend adopters commit to **one backend** for a pilot rather than running all four.
+  quantifiable. The project itself commits to **two** production-grade backends in v1 (Postgres +
+  Redis, per §11 #2 / GR-8), but still recommends an **adopter** pilot on **one** backend rather than
+  running all of them.
 - **GR-8 Production-readiness proof.** Beyond functional acceptance (§11), publish **load-tested
   throughput, tail-latency, and DR/failure behavior** for at least the v1 reference backends
   (Postgres, Redis), tied to the committed SLOs (OQ-A).

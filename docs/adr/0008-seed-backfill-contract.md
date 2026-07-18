@@ -47,6 +47,10 @@ BucketValue = (bucketStart, bucketEnd, aggregate)
   ADR 0006 — members are keyed-hashed at rest, FR-38) or with a pre-computed HLL sketch of the
   agreed precision `p` (ADR 0006, tumbling only per ADR 0005). A backend rejects a seed whose
   distinct representation it cannot store (e.g. an HLL sketch on a sliding feature — ADR 0005).
+  An `hllSketch` is **opaque, same-implementation-only bytes** (ADR 0006 interop caveat): a backend
+  accepts an `hllSketch` seed only from its own implementation and MUST reject a foreign one. **Exact
+  members migrate across backends; HLL sketches do not** — cross-backend HLL migration is out of scope
+  for v1.
 - Seeded state is **flagged onboarding-seeded**, distinct from organically recorded state (FR-32), so
   it is auditable (§16 GR-5 admin audit log) and distinguishable in exports (GR-6).
 
@@ -83,9 +87,11 @@ that an unrepresentable seed (e.g. sliding HLL, or a seed on a backend that does
   identically (FR-14) — instead of the wrong-apportionment failure a single-total seed would cause.
 - **Optionality is honest.** A backend that genuinely cannot represent seeded buckets declares so and
   rejects seeds cleanly, rather than the engine pretending seeding works everywhere (§1).
-- **Migration story has a foundation.** Per-bucket seed is the ingest side of the export/migration
-  path business adopters asked for (GR-6): export counter data as bucket values, seed it into another
-  backend.
+- **Migration story has a foundation (for exact state).** Per-bucket seed is the ingest side of the
+  export/migration path business adopters asked for (GR-6): export counter data as bucket values, seed
+  it into another backend. This holds for COUNT, SUM, and **exact** DISTINCT; **HLL-sketch distinct
+  does not migrate across backends** (opaque, same-implementation-only — ADR 0006), so GR-6's
+  cross-backend migration is scoped to exact aggregates in v1.
 
 ### Negative
 

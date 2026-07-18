@@ -27,9 +27,10 @@ dependencies {
     testRuntimeOnly(libs.logback.classic)
 }
 
-// velocity.test-conventions sets the baseline gate (LINE ≥0.70, BRANCH ≥0.55) for every library
-// module. velocity-core is the engine and is held to a stricter ≥80% line bar (NFR-14); the
-// baseline branch floor applies via the convention.
+// velocity.test-conventions sets the baseline gate for every library module (now LINE ≥0.80,
+// BRANCH ≥0.70). velocity-core is the engine and pins its LINE floor at ≥0.80 explicitly so that,
+// even if the shared baseline is ever relaxed, the core stays at the higher bar (NFR-14). Gradle
+// enforces all rules, so this restates only the limit it guarantees.
 tasks.named<JacocoCoverageVerification>("jacocoTestCoverageVerification") {
     violationRules {
         rule {

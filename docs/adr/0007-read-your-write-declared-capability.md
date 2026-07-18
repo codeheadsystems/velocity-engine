@@ -4,7 +4,9 @@ Date: 2026-07-18
 
 ## Status
 
-Accepted.
+Accepted. **Completed by [ADR 0009](0009-hot-path-result-dto.md)**, which freezes the rest of the
+hot-path result shape (the failure variant, per-feature apply status, and definition-version stamp)
+that this ADR deferred.
 
 ## Context
 

@@ -59,9 +59,15 @@ velocity-core  ──depends-on──►  velocity-spi  ◄──depends-on─�
 `velocity-core` depends on `velocity-spi`. Every `velocity-backend-*` depends on `velocity-spi`.
 Backends **do not** depend on `velocity-core` — a backend author needs the contract, never the
 engine's internals. `velocity-spi` itself depends on as little as possible (jspecify annotations,
-the money type; no Dropwizard, no Dagger, no Jackson-bound types beyond what the DTOs strictly need)
-so that implementing a backend does not drag the engine's framework choices onto the backend author's
-classpath.
+the money type; no Dropwizard, no Dagger, **no Jackson**) so that implementing a backend does not drag
+the engine's framework choices onto the backend author's classpath.
+
+**Resolved (v0.2 re-review):** the SPI is **serialization-neutral**. Its DTOs (intents,
+`FeatureResult`/`FeatureValue`, `BackendCapabilities`; see [ADR 0009](0009-hot-path-result-dto.md))
+are plain records with no Jackson binding; Jackson 3 lives in `velocity-core` / the wire layer, which
+owns JSON (NFR-4). The skeleton originally put `jackson` on `velocity-spi`'s `api` surface — that
+would have frozen Jackson into the compatibility surface (NFR-17); it was removed so the code matches
+this ADR.
 
 `velocity-spi` is the versioned compatibility surface named in NFR-17: it evolves **additive-only**,
 with new capability fields defaulting to "unsupported."
