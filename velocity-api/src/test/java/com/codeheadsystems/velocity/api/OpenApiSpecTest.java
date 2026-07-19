@@ -105,7 +105,8 @@ class OpenApiSpecTest {
             "FeatureResult",
             "PerFeature",
             "ApplyResult",
-            "QueryTuple",
+            "QueryRequest",
+            "QueryResponse",
             "BackendCapabilities",
             "FeatureDefinition",
             "Problem");
