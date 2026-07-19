@@ -18,9 +18,13 @@ import com.codeheadsystems.velocity.spi.TumblingSupport;
 import com.codeheadsystems.velocity.spi.VelocityBackend;
 import com.codeheadsystems.velocity.spi.model.Aggregation;
 import com.codeheadsystems.velocity.spi.model.AggregationType;
+import com.codeheadsystems.velocity.spi.model.ApplyStatus;
 import com.codeheadsystems.velocity.spi.model.BackendCapabilities;
 import com.codeheadsystems.velocity.spi.model.FailureCode;
+import com.codeheadsystems.velocity.spi.model.Feature;
 import com.codeheadsystems.velocity.spi.model.FeatureResult;
+import com.codeheadsystems.velocity.spi.model.Intent.CountIntent;
+import com.codeheadsystems.velocity.spi.model.PerFeature;
 import com.codeheadsystems.velocity.spi.model.QueryContext;
 import com.codeheadsystems.velocity.spi.model.Window;
 import com.codeheadsystems.velocity.spi.model.WindowType;
@@ -97,6 +101,46 @@ public final class CapabilityConformanceScenarios {
   public void supportedEmptyWindowReturnsKnownZero() {
     final Window supported = backend.capabilities().windows().get(0).window();
     assertValue(queryOne(supported), 0);
+  }
+
+  /**
+   * Applying to an unsupported window fast-rejects with a distinguishable {@code FAILED} {@link
+   * PerFeature} carrying {@link FailureCode#UNSUPPORTED_WINDOW} — never a silent {@code APPLIED}
+   * (the apply-side twin of {@link #unsupportedWindowQueryIsDistinguishableFailure}; ADR 0009 rule
+   * 1, FR-13). Exercised via the {@link CountStore} path — the guard is aggregation-independent.
+   */
+  public void unsupportedWindowApplyIsDistinguishableFailure() {
+    final PerFeature pf = applyCount(UNSUPPORTED).get(0);
+    assertThat(pf.status()).isEqualTo(ApplyStatus.FAILED);
+    assertThat(pf.result().isSuccess()).isFalse();
+    assertFailure(pf.result(), FailureCode.UNSUPPORTED_WINDOW);
+  }
+
+  /**
+   * One apply spanning a supported and an unsupported window applies the supported one and fails
+   * only the unsupported one — a per-feature partial outcome (FR-34), not all-or-nothing.
+   */
+  public void mixedApplyPartiallyFailsOnUnsupportedWindow() {
+    final Window supported = backend.capabilities().windows().get(0).window();
+    final List<PerFeature> results = applyCount(supported, UNSUPPORTED);
+    assertThat(results).hasSize(2);
+    final PerFeature applied =
+        results.stream().filter(pf -> pf.status() == ApplyStatus.APPLIED).findFirst().orElseThrow();
+    final PerFeature failed =
+        results.stream().filter(pf -> pf.status() == ApplyStatus.FAILED).findFirst().orElseThrow();
+    assertThat(applied.result().isSuccess()).isTrue();
+    assertFailure(failed.result(), FailureCode.UNSUPPORTED_WINDOW);
+  }
+
+  private List<PerFeature> applyCount(final Window... windows) {
+    if (!(backend instanceof CountStore countStore)) {
+      throw new IllegalStateException(
+          "apply-side capability scenarios require a CountStore backend");
+    }
+    final Feature feature = Tck.countFeature(windows);
+    return countStore
+        .applyCount(Tck.apply(NS_A), List.of(new CountIntent(feature, SUBJECT_A)))
+        .perFeature();
   }
 
   private FeatureResult queryOne(final Window window) {
