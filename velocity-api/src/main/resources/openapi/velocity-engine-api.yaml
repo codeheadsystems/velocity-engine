@@ -1,0 +1,830 @@
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# Velocity Engine HTTP API — the single source of truth for the wire contract (AR-1).
+# The Java client and shared API DTOs are GENERATED from this document downstream via
+# openapi-generator (AR-3, P11); there are no hand-written DTOs in this module.
+#
+# The wire schemas mirror the frozen velocity-spi model (docs/adr/0009). Where the SPI uses a
+# BigDecimal `value`, the wire uses a JSON STRING of a decimal integer — see the Value/Money
+# schemas and OQ-D (docs/requirements.md §13): JSON numbers lose precision above 2^53 and are
+# coerced to float by many generated clients, so every numeric aggregate crosses the wire as a
+# base-10 integer string.
+openapi: 3.1.0
+
+info:
+  title: Velocity Engine API
+  version: 0.1.0
+  description: >-
+    HTTP/JSON surface of the Velocity Engine — a backend-agnostic counting substrate that records
+    events and returns their velocity (COUNT / SUM / DISTINCT over sliding & tumbling time windows).
+    It is a counting substrate, not a decisioning platform: the caller owns all thresholds and
+    decisions (docs/requirements.md §1, D1).
+
+
+    All numeric aggregate values (`Value`, `Money`) are JSON **strings** of a base-10 integer
+    (`^-?\d+$`) — money in integer cents (P3), counts/cardinalities as integers — to avoid
+    JSON-number precision loss (> 2^53) and float coercion in generated clients (OQ-D).
+  license:
+    name: BSD-3-Clause
+    identifier: BSD-3-Clause
+
+servers:
+  - url: "{scheme}://{host}/velocity"
+    description: Velocity Engine service (Dropwizard tier). Host/scheme are deployment-specific.
+    variables:
+      scheme:
+        default: https
+        enum:
+          - https
+          - http
+      host:
+        default: localhost:8080
+
+security:
+  # API keys are the v1 default auth mechanism (P9, NFR-12). Every operation requires a valid key.
+  # Each key is bound server-side to an allowed-namespace set; a request whose {namespace} is outside
+  # the key's scope is denied with 403 (NFR-21 / §15 R4) — the client never selects its own scope.
+  - ApiKeyAuth: []
+
+tags:
+  - name: record
+    description: Hot-path event recording with read-your-write velocities (FR-6, AR-2).
+  - name: query
+    description: Batched velocity queries with no mutation (FR-6, FR-8).
+  - name: metadata
+    description: Backend capability and feature-definition discovery (FR-12, FR-41).
+  - name: admin
+    description: Administrative operations, rate-isolated from the hot path (FR-23, FR-33).
+
+paths:
+  /v1/{namespace}/record:
+    post:
+      tags: [record]
+      operationId: recordEvent
+      summary: Record an event and return the affected feature velocities.
+      description: >-
+        Records a single event for a subject and returns the post-increment velocities of every
+        feature the namespace's definitions fan the event out to (FR-1, FR-2, D4). The set of
+        features updated is decided **server-side** by the namespace's feature definitions — the
+        caller does not enumerate features. A record with no matching fan-out is a no-op returning an
+        empty result (FR-4). Read-your-write strength is the backend's declared level, per feature.
+      parameters:
+        - $ref: "#/components/parameters/NamespacePath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecordRequest"
+      responses:
+        "200":
+          description: Fan-out applied; per-feature apply status and velocities returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApplyResult"
+        "400": { $ref: "#/components/responses/Validation" }
+        "403": { $ref: "#/components/responses/ForbiddenNamespace" }
+        "404": { $ref: "#/components/responses/UnknownNamespace" }
+        "422": { $ref: "#/components/responses/UnprocessableRequest" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/BackendUnavailable" }
+        "504": { $ref: "#/components/responses/DeadlineExceeded" }
+
+  /v1/{namespace}/query:
+    post:
+      tags: [query]
+      operationId: queryVelocities
+      summary: Query current velocities for a batch of tuples (no mutation).
+      description: >-
+        Returns the current velocity for each requested `(subject, aggregation, window)` tuple
+        without recording an event (FR-6). Results are aligned **positionally** with the request
+        tuples: `results[i]` is the outcome for `tuples[i]`, each a value-or-failure `FeatureResult`
+        (ADR 0009) — a failing tuple never collapses the batch.
+      parameters:
+        - $ref: "#/components/parameters/NamespacePath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QueryRequest"
+      responses:
+        "200":
+          description: Per-tuple results, positionally aligned with the request tuples.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueryResponse"
+        "400": { $ref: "#/components/responses/Validation" }
+        "403": { $ref: "#/components/responses/ForbiddenNamespace" }
+        "404": { $ref: "#/components/responses/UnknownNamespace" }
+        "422": { $ref: "#/components/responses/UnprocessableRequest" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/BackendUnavailable" }
+        "504": { $ref: "#/components/responses/DeadlineExceeded" }
+
+  /v1/{namespace}/capabilities:
+    get:
+      tags: [metadata]
+      operationId: getCapabilities
+      summary: Describe the active backend's declared capabilities.
+      description: >-
+        Returns the `BackendCapabilities` the namespace's active backend declares — supported
+        windows/aggregations/exactness, retention, read-your-write level, distinct thresholds, and
+        fan-out caps (FR-12, §6.1). The engine surfaces these truthfully rather than papering over
+        backend differences.
+      parameters:
+        - $ref: "#/components/parameters/NamespacePath"
+      responses:
+        "200":
+          description: The active backend's declared capabilities.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackendCapabilities"
+        "403": { $ref: "#/components/responses/ForbiddenNamespace" }
+        "404": { $ref: "#/components/responses/UnknownNamespace" }
+        "503": { $ref: "#/components/responses/BackendUnavailable" }
+
+  /v1/{namespace}/features:
+    get:
+      tags: [metadata]
+      operationId: listFeatures
+      summary: List the namespace's feature definitions (config view).
+      description: >-
+        Lists the feature definitions configured for the namespace so a rules layer can discover,
+        pin, and diff them (FR-41, §15 R13). Because definitions are hot-reloadable (P6) and every
+        feature value carries the `definitionVersionHash` it was computed under (FR-40), the optional
+        `version` filter narrows the listing to a specific definition-set version.
+      parameters:
+        - $ref: "#/components/parameters/NamespacePath"
+        - name: version
+          in: query
+          required: false
+          description: >-
+            Optional definition-set version/hash to filter by (FR-41). When omitted, the currently
+            active definitions are returned.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The namespace's feature definitions.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FeatureDefinitionList"
+        "403": { $ref: "#/components/responses/ForbiddenNamespace" }
+        "404": { $ref: "#/components/responses/UnknownNamespace" }
+
+  /v1/{namespace}/purge:
+    post:
+      tags: [admin]
+      operationId: purge
+      summary: Administratively purge a subject or the whole namespace.
+      description: >-
+        Erases stored velocity data for a single subject, or — when `subject` is omitted — for the
+        entire namespace (FR-23, e.g. GDPR erasure or test cleanup). This is an admin operation,
+        rate-isolated from the hot path (FR-33), and is accepted for asynchronous processing.
+      parameters:
+        - $ref: "#/components/parameters/NamespacePath"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurgeRequest"
+      responses:
+        "202":
+          description: Purge accepted for processing.
+        "400": { $ref: "#/components/responses/Validation" }
+        "403": { $ref: "#/components/responses/ForbiddenNamespace" }
+        "404": { $ref: "#/components/responses/UnknownNamespace" }
+        "429": { $ref: "#/components/responses/Overloaded" }
+
+components:
+
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: >-
+        API-key authentication (P9). Send the key in the `X-API-Key` header. Each key is bound
+        server-side to an allowed-namespace set; a request whose path `{namespace}` is outside the
+        key's scope is denied with 403 (NFR-21 / §15 R4). Cross-namespace access is never
+        client-selectable.
+
+  parameters:
+    NamespacePath:
+      name: namespace
+      in: path
+      required: true
+      description: The tenancy scope all keys are bound by (D6, FR-19). Non-blank.
+      schema:
+        $ref: "#/components/schemas/Namespace"
+
+  responses:
+    Validation:
+      description: The request was malformed or failed validation (mirrors FailureCode.VALIDATION).
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          example:
+            type: "https://velocity.codeheadsystems.com/problems/validation"
+            title: Validation error
+            status: 400
+            detail: "subject.value must not be blank"
+    UnknownNamespace:
+      description: The namespace is not configured on this deployment.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          example:
+            type: "https://velocity.codeheadsystems.com/problems/unknown-namespace"
+            title: Unknown namespace
+            status: 404
+            detail: "namespace 'acme' is not configured"
+    ForbiddenNamespace:
+      description: >-
+        The API key is not authorized for this namespace (NFR-21 / §15 R4). Cross-namespace access is
+        denied server-side.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          example:
+            type: "https://velocity.codeheadsystems.com/problems/forbidden-namespace"
+            title: Namespace forbidden for this key
+            status: 403
+            detail: "API key is not bound to namespace 'acme'"
+    UnprocessableRequest:
+      description: >-
+        The request was well-formed but cannot be satisfied — e.g. it targets a window the active
+        backend does not support (mirrors FailureCode.UNSUPPORTED_WINDOW, FR-13).
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          examples:
+            unsupportedWindow:
+              value:
+                type: "https://velocity.codeheadsystems.com/problems/unsupported-window"
+                title: Unsupported window
+                status: 422
+                detail: "window PT5S/SLIDING is not supported by the active backend"
+            validation:
+              value:
+                type: "https://velocity.codeheadsystems.com/problems/validation"
+                title: Validation error
+                status: 422
+                detail: "requestedWindows contains a window not declared by any feature"
+    RateLimited:
+      description: The caller exceeded an allowed request rate (AR-5).
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying.
+          schema:
+            type: integer
+            minimum: 0
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          example:
+            type: "https://velocity.codeheadsystems.com/problems/rate-limited"
+            title: Rate limited
+            status: 429
+            detail: "per-key request rate exceeded"
+    Overloaded:
+      description: >-
+        The service shed this request to protect itself / preserve per-namespace fairness rather than
+        queue unbounded (NFR-22, mirrors an OVERLOADED outcome).
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying.
+          schema:
+            type: integer
+            minimum: 0
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          example:
+            type: "https://velocity.codeheadsystems.com/problems/overloaded"
+            title: Overloaded
+            status: 429
+            detail: "load-shed: namespace concurrency cap reached"
+    BackendUnavailable:
+      description: >-
+        The active backend is down or partitioned (mirrors FailureCode.UNAVAILABLE, NFR-19). Distinct
+        from a deadline so a caller's fail-open/closed policy can differ.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          example:
+            type: "https://velocity.codeheadsystems.com/problems/backend-unavailable"
+            title: Backend unavailable
+            status: 503
+            detail: "backend 'redis-hot' is unreachable"
+    DeadlineExceeded:
+      description: >-
+        The caller/server deadline elapsed before a result was available (mirrors
+        FailureCode.DEADLINE_EXCEEDED, NFR-19). Distinct from unavailable (AR-5).
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          example:
+            type: "https://velocity.codeheadsystems.com/problems/deadline-exceeded"
+            title: Deadline exceeded
+            status: 504
+            detail: "backend did not respond within the request deadline"
+
+  schemas:
+
+    # ---- Scalars / value objects -------------------------------------------------------------
+
+    Namespace:
+      type: string
+      minLength: 1
+      description: A first-class tenancy scope (D6, FR-19); non-blank.
+      example: acme
+
+    Money:
+      type: string
+      pattern: '^-?\d+$'
+      description: >-
+        A monetary amount as a JSON **string** of integer **cents** (P3), e.g. `"14950"` = $149.50.
+        A string — not a JSON number — because cent amounts can exceed 2^53 and JSON numbers lose
+        precision / are coerced to float by generated clients (OQ-D).
+      example: "14950"
+
+    Value:
+      type: string
+      pattern: '^-?\d+$'
+      description: >-
+        An aggregate value as a JSON **string** of a base-10 integer (OQ-D): a count for
+        COUNT/DISTINCT, or a sum in integer cents for SUM (P3). String-encoded for the same
+        precision-safety reason as `Money`.
+      example: "42"
+
+    Subject:
+      type: object
+      description: The structured key an aggregation is computed for (P5).
+      required: [type, value]
+      properties:
+        type:
+          type: string
+          minLength: 1
+          description: The subject type, e.g. `card`, `account`, `ip`.
+          example: card
+        value:
+          type: string
+          minLength: 1
+          description: The subject value.
+          example: "1234"
+      additionalProperties: false
+
+    AggregationType:
+      type: string
+      description: The kind of aggregation a feature computes (D2, FR-11).
+      enum: [COUNT, SUM, DISTINCT]
+
+    Aggregation:
+      type: object
+      description: >-
+        What a feature aggregates. `dimension` is present **iff** `type` is `DISTINCT` (the named
+        dimension whose distinct values are counted, FR-11); it MUST be absent for COUNT/SUM.
+      required: [type]
+      properties:
+        type:
+          $ref: "#/components/schemas/AggregationType"
+        dimension:
+          type: [string, "null"]
+          minLength: 1
+          description: The distinct dimension name; present only for `DISTINCT`.
+          example: ip
+      additionalProperties: false
+
+    WindowType:
+      type: string
+      description: >-
+        How time is modeled for a window (D3, FR-14). `SLIDING` covers `[now - duration, now]`;
+        `TUMBLING` uses aligned fixed buckets. HLL-distinct is valid on `TUMBLING` only (ADR 0005).
+      enum: [SLIDING, TUMBLING]
+
+    Window:
+      type: object
+      description: A time window of a given type and duration (FR-14).
+      required: [duration, type]
+      properties:
+        duration:
+          type: string
+          description: >-
+            The window span as an ISO-8601 duration (e.g. `PT1H`, `PT30M`, `P1D`); strictly
+            positive.
+          example: PT1H
+        type:
+          $ref: "#/components/schemas/WindowType"
+      additionalProperties: false
+
+    WindowBounds:
+      type: object
+      description: The concrete `[start, end]` interval a returned value covers (FR-7).
+      required: [start, end]
+      properties:
+        start:
+          type: string
+          format: date-time
+          description: Inclusive start instant (backend clock is authority for sliding edges, FR-3).
+        end:
+          type: string
+          format: date-time
+          description: End instant; not before `start`.
+      additionalProperties: false
+
+    Exactness:
+      type: string
+      description: >-
+        Whether a value is exact or approximate (FR-7). A window is `APPROXIMATE` if any constituent
+        bucket was served by an HLL sketch (ADR 0006).
+      enum: [EXACT, APPROXIMATE]
+
+    ReadYourWriteLevel:
+      type: string
+      description: >-
+        The read-your-write guarantee under which a value was produced (ADR 0007, §15 R2). A declared
+        capability, not universal; stated per feature value.
+      enum: [ATOMIC, SNAPSHOT, BESTEFFORT]
+
+    FailureCode:
+      type: string
+      description: >-
+        A distinguishable data-plane failure reason (ADR 0009, NFR-19) — a `Failure` carries one of
+        these instead of a silent `0`. **Extensible**: clients MUST tolerate an unrecognized code by
+        treating it as a generic failure.
+      enum:
+        - UNAVAILABLE
+        - DEADLINE_EXCEEDED
+        - CARDINALITY_CAP_EXCEEDED
+        - UNSUPPORTED_WINDOW
+        - VALIDATION
+        - INTERNAL
+
+    ApplyStatus:
+      type: string
+      description: The per-feature outcome of a record fan-out (FR-34, ADR 0009).
+      enum: [APPLIED, FAILED, SKIPPED]
+
+    Feature:
+      type: object
+      description: >-
+        A named counter reference `(name, aggregation, windows)`, e.g. `card.count.1h` — the feature
+        a value is for.
+      required: [name, aggregation, windows]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          example: card.count.1h
+        aggregation:
+          $ref: "#/components/schemas/Aggregation"
+        windows:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/Window"
+      additionalProperties: false
+
+    FeatureValue:
+      type: object
+      description: >-
+        The successful value of a feature read/write with all decision-bearing metadata (ADR 0009).
+      required: [feature, window, value, exactness, readYourWriteLevel, windowBounds, asOf]
+      properties:
+        feature:
+          $ref: "#/components/schemas/Feature"
+        window:
+          $ref: "#/components/schemas/Window"
+        value:
+          $ref: "#/components/schemas/Value"
+        exactness:
+          $ref: "#/components/schemas/Exactness"
+        readYourWriteLevel:
+          $ref: "#/components/schemas/ReadYourWriteLevel"
+        definitionVersionHash:
+          type: [string, "null"]
+          description: >-
+            The feature-definition version the value was computed under (FR-40). Part of the frozen
+            shape (ADR 0009 rule 3) but **nullable until FR-40's behavior lands** — may be null in v1.
+        windowBounds:
+          $ref: "#/components/schemas/WindowBounds"
+        asOf:
+          type: string
+          format: date-time
+          description: The backend-clock instant the value is as-of (FR-7).
+      additionalProperties: false
+
+    ResultKind:
+      type: string
+      description: Discriminator tag for `FeatureResult` — SUCCESS carries a value, FAILURE a code.
+      enum: [SUCCESS, FAILURE]
+
+    FeatureResultSuccess:
+      type: object
+      description: A successful `FeatureResult` (ADR 0009).
+      required: [kind, value]
+      properties:
+        kind:
+          $ref: "#/components/schemas/ResultKind"
+        value:
+          $ref: "#/components/schemas/FeatureValue"
+      additionalProperties: false
+
+    FeatureResultFailure:
+      type: object
+      description: >-
+        A distinguishable failure `FeatureResult` — never a silent `0` (ADR 0009 rule 1). Lets a
+        synchronous caller choose fail-open vs fail-closed deterministically.
+      required: [kind, code]
+      properties:
+        kind:
+          $ref: "#/components/schemas/ResultKind"
+        code:
+          $ref: "#/components/schemas/FailureCode"
+        detail:
+          type: [string, "null"]
+          description: Optional human-readable detail.
+      additionalProperties: false
+
+    FeatureResult:
+      description: >-
+        The frozen value-or-failure result of a data-plane read/write (ADR 0009): **either** a
+        success carrying a `FeatureValue` **or** a failure carrying a `FailureCode`. Discriminated by
+        the `kind` property.
+      oneOf:
+        - $ref: "#/components/schemas/FeatureResultSuccess"
+        - $ref: "#/components/schemas/FeatureResultFailure"
+      discriminator:
+        propertyName: kind
+        mapping:
+          SUCCESS: "#/components/schemas/FeatureResultSuccess"
+          FAILURE: "#/components/schemas/FeatureResultFailure"
+
+    PerFeature:
+      type: object
+      description: >-
+        The per-feature outcome of a record fan-out: its apply status and value-or-failure result
+        (FR-34, ADR 0009). A partial failure is expressible alongside successes.
+      required: [feature, status, result]
+      properties:
+        feature:
+          $ref: "#/components/schemas/Feature"
+        status:
+          $ref: "#/components/schemas/ApplyStatus"
+        result:
+          $ref: "#/components/schemas/FeatureResult"
+      additionalProperties: false
+
+    ApplyResult:
+      type: object
+      description: "The aggregate result of a record fan-out: one `PerFeature` per touched feature."
+      required: [perFeature]
+      properties:
+        perFeature:
+          type: array
+          description: Per-feature outcomes; empty when the event matched no fan-out rule (FR-4).
+          items:
+            $ref: "#/components/schemas/PerFeature"
+      additionalProperties: false
+
+    # ---- Requests ----------------------------------------------------------------------------
+
+    RecordRequest:
+      type: object
+      description: >-
+        An event to record. The features updated are decided server-side by the namespace's feature
+        definitions (fan-out, FR-1/FR-18) — the caller does not enumerate features.
+      required: [subject]
+      properties:
+        subject:
+          $ref: "#/components/schemas/Subject"
+        dimensions:
+          type: object
+          description: >-
+            RAW dimension values keyed by dimension name (e.g. `{ "ip": "203.0.113.7" }`). The
+            SERVICE keyed-hashes these at rest per FR-38 — callers send raw values, **never**
+            pre-hashed members.
+          additionalProperties:
+            type: string
+          example:
+            ip: "203.0.113.7"
+            merchant: "m-88"
+        value:
+          $ref: "#/components/schemas/Money"
+        requestedWindows:
+          type: array
+          description: >-
+            Optional filter bounding which windows are returned, to cap payload size (FR-2). When
+            omitted, all fanned-out windows are returned.
+          items:
+            $ref: "#/components/schemas/Window"
+      additionalProperties: false
+
+    QueryTuple:
+      type: object
+      description: A single read request `(subject, aggregation, window)` (FR-6).
+      required: [subject, aggregation, window]
+      properties:
+        subject:
+          $ref: "#/components/schemas/Subject"
+        aggregation:
+          $ref: "#/components/schemas/Aggregation"
+        window:
+          $ref: "#/components/schemas/Window"
+      additionalProperties: false
+
+    QueryRequest:
+      type: object
+      description: A batch of tuples to read in one call (FR-8).
+      required: [tuples]
+      properties:
+        tuples:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/QueryTuple"
+      additionalProperties: false
+
+    QueryResponse:
+      type: object
+      description: Per-tuple results, aligned **positionally** with the request tuples.
+      required: [results]
+      properties:
+        results:
+          type: array
+          description: "`results[i]` is the outcome for the request's `tuples[i]`."
+          items:
+            $ref: "#/components/schemas/FeatureResult"
+      additionalProperties: false
+
+    PurgeRequest:
+      type: object
+      description: >-
+        Purge target (FR-23). Omit `subject` to purge the entire namespace; provide it to purge a
+        single subject.
+      properties:
+        subject:
+          $ref: "#/components/schemas/Subject"
+      additionalProperties: false
+
+    # ---- Metadata / capabilities -------------------------------------------------------------
+
+    WindowSpec:
+      type: object
+      description: A supported window with its exactness and storage granularity (§6.1).
+      required: [window, exactness, granularity]
+      properties:
+        window:
+          $ref: "#/components/schemas/Window"
+        exactness:
+          $ref: "#/components/schemas/Exactness"
+        granularity:
+          type: string
+          description: The bucket granularity the backend stores this window at, ISO-8601 duration.
+          example: PT1M
+      additionalProperties: false
+
+    BackendCapabilities:
+      type: object
+      description: >-
+        What the namespace's active backend can do (§6.1). The engine reads this to validate
+        requests and shape defaults; it is never hardcoded (P18).
+      required:
+        - aggregations
+        - windows
+        - distinctHllSliding
+        - distinctExactCardinalityClamp
+        - distinctHllThresholdDefault
+        - maxRetention
+        - readYourWriteLevel
+        - idempotencySupported
+        - seedSupported
+        - maxAtomicFanOut
+      properties:
+        aggregations:
+          type: array
+          description: Supported aggregation kinds.
+          items:
+            $ref: "#/components/schemas/AggregationType"
+        windows:
+          type: array
+          description: Supported window specs (duration/type/exactness/granularity).
+          items:
+            $ref: "#/components/schemas/WindowSpec"
+        distinctHllSliding:
+          type: boolean
+          description: >-
+            Always `false` — HLL-distinct is invalid on sliding windows (ADR 0005). Present so the
+            negative can be asserted.
+        distinctExactCardinalityClamp:
+          $ref: "#/components/schemas/Value"
+        distinctHllThresholdDefault:
+          $ref: "#/components/schemas/Value"
+        maxRetention:
+          type: string
+          description: The retention ceiling bounding how far back windows reach (FR-22a), ISO-8601.
+          example: P30D
+        readYourWriteLevel:
+          $ref: "#/components/schemas/ReadYourWriteLevel"
+        idempotencySupported:
+          type: boolean
+          description: Whether the backend supports idempotent apply (FR-5, §15 R15).
+        seedSupported:
+          type: boolean
+          description: Whether the backend implements SeedSupport (ADR 0008).
+        maxAtomicFanOut:
+          type: integer
+          description: >-
+            The maximum number of intents applied atomically in one call (e.g. DynamoDB's 100-item
+            transaction cap, §15 R3).
+      additionalProperties: false
+
+    FeatureDefinition:
+      type: object
+      description: >-
+        The configuration view of a feature (FR-16, FR-40, FR-41): its name, aggregation, windows,
+        the backend that provides it, and the definition version/hash it is stamped with. This is the
+        config-time counterpart of the runtime `Feature`.
+      required: [name, aggregation, windows, backend, definitionVersionHash]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          example: card.distinct.ip.1d
+        aggregation:
+          $ref: "#/components/schemas/Aggregation"
+        windows:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/Window"
+        backend:
+          type: string
+          minLength: 1
+          description: The target backend that provides this feature (FR-16; a feature binds to one).
+          example: postgres-ref
+        definitionVersionHash:
+          type: string
+          description: The version/hash of the definition set this feature belongs to (FR-40).
+      additionalProperties: false
+
+    FeatureDefinitionList:
+      type: object
+      description: The namespace's feature definitions (FR-41).
+      required: [features]
+      properties:
+        features:
+          type: array
+          items:
+            $ref: "#/components/schemas/FeatureDefinition"
+      additionalProperties: false
+
+    # ---- Errors (RFC 9457) -------------------------------------------------------------------
+
+    Problem:
+      type: object
+      description: >-
+        An RFC 9457 problem detail (`application/problem+json`, AR-5). The `type` URI names the
+        problem class; documented values mirror the SPI FailureCodes and NFR-19/NFR-22 outcomes:
+        `unknown-namespace` (404), `forbidden-namespace` (403), `validation` (400/422),
+        `unsupported-window` (422), `backend-unavailable` (503), `deadline-exceeded` (504),
+        `overloaded` (429), `rate-limited` (429).
+      properties:
+        type:
+          type: string
+          format: uri
+          default: "about:blank"
+          description: A URI identifying the problem type.
+          example: "https://velocity.codeheadsystems.com/problems/unsupported-window"
+        title:
+          type: string
+          description: A short, human-readable summary of the problem type.
+        status:
+          type: integer
+          format: int32
+          minimum: 100
+          maximum: 599
+          description: The HTTP status code.
+        detail:
+          type: [string, "null"]
+          description: A human-readable explanation specific to this occurrence.
+        instance:
+          type: [string, "null"]
+          format: uri
+          description: A URI identifying this specific occurrence.
+      additionalProperties: true
