@@ -48,6 +48,10 @@ lettuce = "7.6.0.RELEASE"
 # Testing — Testcontainers for the backend integration tests (Postgres now; Redis/LocalStack later).
 testcontainers = "1.21.4"
 
+# OpenAPI parsing — validates the committed velocity-api spec is well-formed OpenAPI 3.1 in a test
+# (velocity-api OpenApiSpecTest). velocity-only; tracks the current latest 2.1.x.
+swagger-parser = "2.1.22"
+
 # Test bundle (wired in the test convention plugin). Pinned to pk-auth.
 junit-jupiter = "6.1.2"
 assertj = "3.27.7"
@@ -85,6 +89,9 @@ hikaricp = { module = "com.zaxxer:HikariCP", version.ref = "hikaricp" }
 
 # Persistence — Redis / Lettuce (phase-2 sliding/hot-path backend).
 lettuce-core = { module = "io.lettuce:lettuce-core", version.ref = "lettuce" }
+
+# OpenAPI 3.1 parser — used only in velocity-api's spec-validity test.
+swagger-parser = { module = "io.swagger.parser.v3:swagger-parser", version.ref = "swagger-parser" }
 
 # Testcontainers (backend integration tests).
 testcontainers-core = { module = "org.testcontainers:testcontainers", version.ref = "testcontainers" }
