@@ -584,8 +584,12 @@ The v0.2 review **reclassified several of these as blockers** (they gate a phase
 - **OQ-C** Feature-definition source of truth for hot-reload (P6): config file + watch, admin API, or
   a config table. Leaning: pluggable `FeatureDefinitionProvider` SPI. Interacts with version-skew
   ([§15 R10](#15-review-driven-revisions-v02)). *(Follow-on.)*
-- **OQ-D 🔴 BLOCKER (phase 2)** Wire money representation (integer cents vs decimal string) — blocks
-  OpenAPI client generation (FR-27, acceptance #10). Resolve before AR-3. → [§15 R17](#15-review-driven-revisions-v02).
+- **OQ-D ✅ RESOLVED** Wire money representation. Money — and every numeric `value` field (counts,
+  cardinalities, sums) — crosses the wire as a **JSON string of a decimal integer** (`^-?\d+$`),
+  money in integer cents (e.g. `"14950"` = $149.50), matching the SPI's `BigDecimal` scale-0 cents
+  (P3). Chosen over a JSON number to avoid precision loss above 2⁵³ and float coercion in generated
+  clients, and over a decimal string for uniformity with the integer-cent SPI. The OpenAPI spec at
+  `velocity-api` (`Money`/`Value` schemas) encodes it. → [§15 R17](#15-review-driven-revisions-v02).
 - **OQ-E ✅ RESOLVED** DISTINCT dimension values are keyed-hashed at rest (per-namespace salt). →
   [§15 R11](#15-review-driven-revisions-v02).
 - **OQ-F 🔴 BLOCKER (SPI freeze, phase 1)** Seed/backfill schema — `seed()` is a *published* SPI
