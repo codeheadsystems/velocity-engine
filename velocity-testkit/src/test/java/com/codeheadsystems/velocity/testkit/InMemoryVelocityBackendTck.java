@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 package com.codeheadsystems.velocity.testkit;
 
+import com.codeheadsystems.velocity.spi.model.Window;
+import com.codeheadsystems.velocity.spi.model.WindowType;
 import com.codeheadsystems.velocity.testkit.tck.CapabilityConformanceScenarios;
 import com.codeheadsystems.velocity.testkit.tck.CountStoreScenarios;
 import com.codeheadsystems.velocity.testkit.tck.DistinctStoreScenarios;
@@ -9,6 +11,7 @@ import com.codeheadsystems.velocity.testkit.tck.SeedSupportScenarios;
 import com.codeheadsystems.velocity.testkit.tck.SlidingScenarios;
 import com.codeheadsystems.velocity.testkit.tck.SumStoreScenarios;
 import com.codeheadsystems.velocity.testkit.tck.TumblingScenarios;
+import java.time.Duration;
 import java.time.Instant;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
@@ -24,6 +27,14 @@ class InMemoryVelocityBackendTck {
   /** A deterministic, mid-minute/mid-hour instant so time-independent scenarios are stable. */
   private static final Instant FIXED = Instant.parse("2026-07-18T12:00:30Z");
 
+  /**
+   * A primary window and a distinct second window, both InMemory-supported, for the shared
+   * scenarios.
+   */
+  private static final Window SLIDING_1M = new Window(Duration.ofMinutes(1), WindowType.SLIDING);
+
+  private static final Window TUMBLING_1H = new Window(Duration.ofHours(1), WindowType.TUMBLING);
+
   private InMemoryVelocityBackend backend;
   private MutableClock clock;
 
@@ -37,32 +48,35 @@ class InMemoryVelocityBackendTck {
   class Count {
     @Test
     void applyThenQueryReturnsExactCount() {
-      new CountStoreScenarios(backend, clock).applyThenQueryReturnsExactCount();
+      new CountStoreScenarios(backend, clock, SLIDING_1M, TUMBLING_1H)
+          .applyThenQueryReturnsExactCount();
     }
 
     @Test
     void applyResultReflectsWriteReadYourWrite() {
-      new CountStoreScenarios(backend, clock).applyResultReflectsWriteReadYourWrite();
+      new CountStoreScenarios(backend, clock, SLIDING_1M, TUMBLING_1H)
+          .applyResultReflectsWriteReadYourWrite();
     }
 
     @Test
     void applyEmitsOneResultPerWindow() {
-      new CountStoreScenarios(backend, clock).applyEmitsOneResultPerWindow();
+      new CountStoreScenarios(backend, clock, SLIDING_1M, TUMBLING_1H)
+          .applyEmitsOneResultPerWindow();
     }
 
     @Test
     void valuesIsolatedByNamespace() {
-      new CountStoreScenarios(backend, clock).valuesIsolatedByNamespace();
+      new CountStoreScenarios(backend, clock, SLIDING_1M, TUMBLING_1H).valuesIsolatedByNamespace();
     }
 
     @Test
     void valuesIsolatedBySubject() {
-      new CountStoreScenarios(backend, clock).valuesIsolatedBySubject();
+      new CountStoreScenarios(backend, clock, SLIDING_1M, TUMBLING_1H).valuesIsolatedBySubject();
     }
 
     @Test
     void concurrentApplyIsAtomic() throws Exception {
-      new CountStoreScenarios(backend, clock).concurrentApplyIsAtomic();
+      new CountStoreScenarios(backend, clock, SLIDING_1M, TUMBLING_1H).concurrentApplyIsAtomic();
     }
   }
 
@@ -70,27 +84,27 @@ class InMemoryVelocityBackendTck {
   class Sum {
     @Test
     void applyThenQueryReturnsExactSumCents() {
-      new SumStoreScenarios(backend, clock).applyThenQueryReturnsExactSumCents();
+      new SumStoreScenarios(backend, clock, SLIDING_1M).applyThenQueryReturnsExactSumCents();
     }
 
     @Test
     void applyResultReflectsRunningSum() {
-      new SumStoreScenarios(backend, clock).applyResultReflectsRunningSum();
+      new SumStoreScenarios(backend, clock, SLIDING_1M).applyResultReflectsRunningSum();
     }
 
     @Test
     void bigDecimalCentsPreservedWithoutOverflow() {
-      new SumStoreScenarios(backend, clock).bigDecimalCentsPreservedWithoutOverflow();
+      new SumStoreScenarios(backend, clock, SLIDING_1M).bigDecimalCentsPreservedWithoutOverflow();
     }
 
     @Test
     void negativeValuesForRefunds() {
-      new SumStoreScenarios(backend, clock).negativeValuesForRefunds();
+      new SumStoreScenarios(backend, clock, SLIDING_1M).negativeValuesForRefunds();
     }
 
     @Test
     void valuesIsolatedByNamespace() {
-      new SumStoreScenarios(backend, clock).valuesIsolatedByNamespace();
+      new SumStoreScenarios(backend, clock, SLIDING_1M).valuesIsolatedByNamespace();
     }
   }
 
@@ -98,22 +112,22 @@ class InMemoryVelocityBackendTck {
   class Distinct {
     @Test
     void applyThenQueryReturnsCardinality() {
-      new DistinctStoreScenarios(backend, clock).applyThenQueryReturnsCardinality();
+      new DistinctStoreScenarios(backend, clock, SLIDING_1M).applyThenQueryReturnsCardinality();
     }
 
     @Test
     void deDupesRepeatedMembers() {
-      new DistinctStoreScenarios(backend, clock).deDupesRepeatedMembers();
+      new DistinctStoreScenarios(backend, clock, SLIDING_1M).deDupesRepeatedMembers();
     }
 
     @Test
     void applyResultReflectsCardinality() {
-      new DistinctStoreScenarios(backend, clock).applyResultReflectsCardinality();
+      new DistinctStoreScenarios(backend, clock, SLIDING_1M).applyResultReflectsCardinality();
     }
 
     @Test
     void valuesIsolatedBySubject() {
-      new DistinctStoreScenarios(backend, clock).valuesIsolatedBySubject();
+      new DistinctStoreScenarios(backend, clock, SLIDING_1M).valuesIsolatedBySubject();
     }
   }
 
@@ -187,18 +201,28 @@ class InMemoryVelocityBackendTck {
     void supportedEmptyWindowReturnsKnownZero() {
       new CapabilityConformanceScenarios(backend).supportedEmptyWindowReturnsKnownZero();
     }
+
+    @Test
+    void unsupportedWindowApplyIsDistinguishableFailure() {
+      new CapabilityConformanceScenarios(backend).unsupportedWindowApplyIsDistinguishableFailure();
+    }
+
+    @Test
+    void mixedApplyPartiallyFailsOnUnsupportedWindow() {
+      new CapabilityConformanceScenarios(backend).mixedApplyPartiallyFailsOnUnsupportedWindow();
+    }
   }
 
   @Nested
   class Purge {
     @Test
     void purgeSubjectClearsThatSubjectOnly() {
-      new PurgeScenarios(backend).purgeSubjectClearsThatSubjectOnly();
+      new PurgeScenarios(backend, SLIDING_1M).purgeSubjectClearsThatSubjectOnly();
     }
 
     @Test
     void purgeNamespaceClearsEntireNamespace() {
-      new PurgeScenarios(backend).purgeNamespaceClearsEntireNamespace();
+      new PurgeScenarios(backend, SLIDING_1M).purgeNamespaceClearsEntireNamespace();
     }
   }
 }
