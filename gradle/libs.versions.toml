@@ -58,6 +58,18 @@ assertj = "3.27.7"
 mockito = "5.23.0"
 logback = "1.5.38"
 
+# Security floors for transitive dependencies (see the "Transitive security floors" block in
+# velocity.java-conventions). None of these are direct dependencies of ours — they arrive
+# transitively (Netty via Lettuce, Jackson 2.x/logback via Dropwizard, commons-compress via
+# Testcontainers, rhino via swagger-parser). Each value is the first patched release for the
+# corresponding Dependabot advisory; it is applied as a *floor*, not a pin, so a higher version
+# on any resolution path still wins. Dependabot keeps these current on its weekly gradle run.
+netty = "4.2.15.Final"          # netty-handler / netty-resolver-dns advisories (GHSA, high)
+jackson2 = "2.21.5"             # jackson-databind 2.x case-insensitive @JsonIgnoreProperties bypass
+commons-compress = "1.26.0"     # Pack200 OOM + corrupted-DUMP infinite-loop DoS
+commons-lang3 = "3.18.0"        # uncontrolled recursion on long inputs
+rhino = "1.7.14.1"              # toFixed() high-CPU DoS
+
 [libraries]
 jspecify = { module = "org.jspecify:jspecify", version.ref = "jspecify" }
 
@@ -113,6 +125,16 @@ assertj-core = { module = "org.assertj:assertj-core", version.ref = "assertj" }
 mockito-core = { module = "org.mockito:mockito-core", version.ref = "mockito" }
 mockito-junit-jupiter = { module = "org.mockito:mockito-junit-jupiter", version.ref = "mockito" }
 logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
+
+# Transitive security floors — referenced only by the constraints block in
+# velocity.java-conventions, never depended on directly. BOMs (netty, jackson 2.x) align a whole
+# artifact family to one version; the singletons floor one coordinate each.
+netty-bom = { module = "io.netty:netty-bom", version.ref = "netty" }
+jackson2-bom = { module = "com.fasterxml.jackson:jackson-bom", version.ref = "jackson2" }
+logback-core = { module = "ch.qos.logback:logback-core", version.ref = "logback" }
+commons-compress = { module = "org.apache.commons:commons-compress", version.ref = "commons-compress" }
+commons-lang3 = { module = "org.apache.commons:commons-lang3", version.ref = "commons-lang3" }
+rhino = { module = "org.mozilla:rhino", version.ref = "rhino" }
 
 [bundles]
 test = ["junit-jupiter", "assertj-core", "mockito-core", "mockito-junit-jupiter"]

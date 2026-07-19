@@ -21,6 +21,29 @@ java {
 dependencies {
     compileOnly(libs.jspecify)
     errorprone(libs.build.errorprone.core)
+
+    // --- Transitive security floors (Dependabot alerts) ---------------------------------------
+    // None of these are direct dependencies; they arrive transitively (Netty via Lettuce,
+    // Jackson 2.x + logback via Dropwizard, commons-compress via Testcontainers, rhino via
+    // swagger-parser). We raise each to its first patched release as a *floor*, not a pin:
+    //   - `platform(...)` imports a BOM as constraints, aligning a whole artifact family (Netty's
+    //     ~9 modules, Jackson 2.x's ~12) to one version so we never split e.g. netty-handler 4.2.15
+    //     against netty-buffer 4.2.13.
+    //   - the `constraints { }` block floors the standalone coordinates.
+    // Floor semantics mean a higher version reached by any other path still wins, so these never
+    // block a future upgrade; Dependabot bumps the catalog entries on its weekly gradle run.
+    // Declared on `implementation` so they reach runtimeClasspath and (via testImplementation
+    // extendsFrom implementation) the test classpaths where rhino/commons-compress live. Modules
+    // that don't pull a given artifact are unaffected — an unused constraint is a no-op.
+    implementation(platform(libs.netty.bom))
+    implementation(platform(libs.jackson2.bom))
+    constraints {
+        implementation(libs.logback.core) { because("logback-core object-injection advisory") }
+        implementation(libs.logback.classic) { because("keep logback-classic aligned with logback-core floor") }
+        implementation(libs.commons.compress) { because("commons-compress Pack200/DUMP DoS advisories") }
+        implementation(libs.commons.lang3) { because("commons-lang3 uncontrolled-recursion advisory") }
+        implementation(libs.rhino) { because("rhino toFixed() DoS advisory") }
+    }
 }
 
 tasks.withType<JavaCompile>().configureEach {
