@@ -30,9 +30,17 @@ public interface DistinctStore extends VelocityBackend {
    * com.codeheadsystems.velocity.spi.model.ApplyStatus apply status} ({@code
    * APPLIED|FAILED|SKIPPED}) alongside the {@link FeatureResult} (ADR 0009, FR-34).
    *
+   * <p>The result cardinality is <strong>one {@link
+   * com.codeheadsystems.velocity.spi.model.PerFeature PerFeature} per {@code (intent × each of the
+   * intent's feature's windows)}</strong>, not one per intent: a feature tracked over several
+   * windows contributes one entry per window, each carrying that window's post-apply value. The
+   * entries are therefore not positionally aligned with {@code intents}; disambiguate by the
+   * entry's feature and its {@link com.codeheadsystems.velocity.spi.model.FeatureValue#window()
+   * window}.
+   *
    * @param ctx the namespace + optional deadline context
    * @param intents the distinct intents to apply
-   * @return the per-intent apply outcomes, positionally aligned with {@code intents}
+   * @return one apply outcome per {@code (intent × the intent's feature's windows)}
    */
   ApplyResult applyDistinct(ApplyContext ctx, List<DistinctIntent> intents);
 

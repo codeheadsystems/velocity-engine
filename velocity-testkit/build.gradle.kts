@@ -13,13 +13,9 @@ dependencies {
     // contract; both are on the api surface so backend modules inherit them from their tests.
     api(project(":velocity-spi"))
     api(libs.jspecify)
-    api(libs.bundles.jackson)
     // AssertJ is on the api surface because the *Scenarios TCK asserts with `assertThat`; backend
     // modules drive these scenarios from their integration tests and inherit the dependency.
     api(libs.assertj.core)
-
-    implementation(libs.caffeine)
-    implementation(libs.slf4j.api)
 
     testRuntimeOnly(libs.logback.classic)
 }
