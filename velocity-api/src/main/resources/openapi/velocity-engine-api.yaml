@@ -95,12 +95,13 @@ paths:
     post:
       tags: [query]
       operationId: queryVelocities
-      summary: Query current velocities for a batch of tuples (no mutation).
+      summary: Query current velocities for a subject's named features (no mutation).
       description: >-
-        Returns the current velocity for each requested `(subject, aggregation, window)` tuple
-        without recording an event (FR-6). Results are aligned **positionally** with the request
-        tuples: `results[i]` is the outcome for `tuples[i]`, each a value-or-failure `FeatureResult`
-        (ADR 0009) — a failing tuple never collapses the batch.
+        Returns the current velocity for each requested feature (by name) for a subject, without
+        recording an event (FR-6). The response maps each feature name to its per-window
+        value-or-failure `FeatureResult`s (ADR 0009) — a failing feature never collapses the batch.
+        The engine resolves a feature name to its aggregation, windows, and backend from the
+        namespace's feature definitions (feature-name-based query — matches `velocity-core`).
       parameters:
         - $ref: "#/components/parameters/NamespacePath"
       requestBody:
@@ -111,7 +112,7 @@ paths:
               $ref: "#/components/schemas/QueryRequest"
       responses:
         "200":
-          description: Per-tuple results, positionally aligned with the request tuples.
+          description: Each requested feature name mapped to its per-window results.
           content:
             application/json:
               schema:
@@ -635,41 +636,33 @@ components:
             $ref: "#/components/schemas/Window"
       additionalProperties: false
 
-    QueryTuple:
+    QueryRequest:
       type: object
-      description: A single read request `(subject, aggregation, window)` (FR-6).
-      required: [subject, aggregation, window]
+      description: A subject and the stable feature names to read for it (FR-6/FR-8).
+      required: [subject, features]
       properties:
         subject:
           $ref: "#/components/schemas/Subject"
-        aggregation:
-          $ref: "#/components/schemas/Aggregation"
-        window:
-          $ref: "#/components/schemas/Window"
-      additionalProperties: false
-
-    QueryRequest:
-      type: object
-      description: A batch of tuples to read in one call (FR-8).
-      required: [tuples]
-      properties:
-        tuples:
+        features:
           type: array
           minItems: 1
+          description: The stable feature names to read (resolved from the namespace's definitions).
           items:
-            $ref: "#/components/schemas/QueryTuple"
+            type: string
       additionalProperties: false
 
     QueryResponse:
       type: object
-      description: Per-tuple results, aligned **positionally** with the request tuples.
-      required: [results]
+      description: Each requested feature name mapped to its per-window value-or-failure results.
+      required: [features]
       properties:
-        results:
-          type: array
-          description: "`results[i]` is the outcome for the request's `tuples[i]`."
-          items:
-            $ref: "#/components/schemas/FeatureResult"
+        features:
+          type: object
+          description: Feature name to the list of its per-window `FeatureResult`s (one per window).
+          additionalProperties:
+            type: array
+            items:
+              $ref: "#/components/schemas/FeatureResult"
       additionalProperties: false
 
     PurgeRequest:

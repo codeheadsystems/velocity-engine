@@ -60,7 +60,7 @@ include("velocity-testkit")  // in-memory velocity-spi impl, conformance TCK sce
 // Phase 2 — v1 reference backends (tumbling + sliding), the service tier, and the generated client.
 include("velocity-backend-jdbi")   // Postgres/JDBI backend — v1 tumbling reference
 include("velocity-backend-redis")  // Redis/Lettuce backend — v1 sliding / hot-path reference
-// include("velocity-dropwizard")     // Dropwizard bundle, Jersey resources, Dagger wiring, API-key auth
+include("velocity-dropwizard")     // Dropwizard bundle, Jersey resources, Dagger wiring, API-key auth
 // include("velocity-client-java")    // Java client generated from OpenAPI via openapi-generator
 // include("examples:dropwizard-demo")// runnable reference service (not published)
 
