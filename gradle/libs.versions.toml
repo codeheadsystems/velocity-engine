@@ -50,7 +50,7 @@ testcontainers = "1.21.4"
 
 # OpenAPI parsing — validates the committed velocity-api spec is well-formed OpenAPI 3.1 in a test
 # (velocity-api OpenApiSpecTest). velocity-only; tracks the current latest 2.1.x.
-swagger-parser = "2.1.22"
+swagger-parser = "2.1.45"
 
 # Test bundle (wired in the test convention plugin). Pinned to pk-auth.
 junit-jupiter = "6.1.2"
@@ -64,11 +64,11 @@ logback = "1.5.38"
 # Testcontainers, rhino via swagger-parser). Each value is the first patched release for the
 # corresponding Dependabot advisory; it is applied as a *floor*, not a pin, so a higher version
 # on any resolution path still wins. Dependabot keeps these current on its weekly gradle run.
-netty = "4.2.15.Final"          # netty-handler / netty-resolver-dns advisories (GHSA, high)
-jackson2 = "2.21.5"             # jackson-databind 2.x case-insensitive @JsonIgnoreProperties bypass
-commons-compress = "1.26.0"     # Pack200 OOM + corrupted-DUMP infinite-loop DoS
-commons-lang3 = "3.18.0"        # uncontrolled recursion on long inputs
-rhino = "1.7.14.1"              # toFixed() high-CPU DoS
+netty = "4.2.16.Final"          # netty-handler / netty-resolver-dns advisories (GHSA, high)
+jackson2 = "2.22.1"             # jackson-databind 2.x case-insensitive @JsonIgnoreProperties bypass
+commons-compress = "1.28.0"     # Pack200 OOM + corrupted-DUMP infinite-loop DoS
+commons-lang3 = "3.20.0"        # uncontrolled recursion on long inputs
+rhino = "1.9.1"              # toFixed() high-CPU DoS
 
 [libraries]
 jspecify = { module = "org.jspecify:jspecify", version.ref = "jspecify" }
