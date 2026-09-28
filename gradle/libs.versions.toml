@@ -22,7 +22,7 @@ jspecify = "1.0.0"
 # Runtime — core / serialization / observability (pinned to pk-auth)
 # Jackson 3 ("tools.jackson") — java.time and JDK 8 datatype support is built into databind 3,
 # so we do not pull jackson-datatype-jdk8 / jackson-datatype-jsr310 separately.
-jackson = "3.2.1"
+jackson = "3.2.3"
 jackson-annotations = "2.22"
 caffeine = "3.2.4"
 micrometer = "1.17.0"
